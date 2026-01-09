@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['d:\\PrivateTools\\Keylogger\\Keylogger.py'],
+    ['Keylogger.py'],
     pathex=[],
     binaries=[],
     datas=[],
